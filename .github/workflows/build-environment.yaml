@@ -39,17 +39,42 @@ jobs:
 
       - name: Validation Rules
         run: |
-          if [[ "$TF_VAR_image_name" =~ [\'\"\;\|\&\<\>\`] ]]; then
-            echo "::error:: Malicious script characters detected in image identifier. Aborting execution."
-            exit 1
-          fi
-          
+
+          # Validate OS
           if [ "$TF_VAR_target_os" != "linux" ]; then
             echo "::error:: Unsupported OS constraint ($TF_VAR_target_os). Pipeline restricted to Linux environments."
             exit 1
           fi
 
-          echo "Success: All metadata policies passed authorization boundaries."
+          # Validate Compute Size
+          case "${TF_VAR_vm_size,,}" in
+            small|middle|large)
+              echo "Validated: Compute size choice ($TF_VAR_vm_size) matches policy."
+              ;;
+            *)
+              echo "::error:: Invalid compute profile size ($TF_VAR_vm_size). Permitted selections are: small, middle, large."
+              exit 1
+              ;;
+          esac
+        
+          # Validate Instance Count
+          if ! [[ "$TF_VAR_vm_count" =~ ^[0-9]+$ ]]; then
+            echo "::error:: Invalid format for instance count ($TF_VAR_vm_count). Value must be a valid integer."
+            exit 1
+          fi
+
+          if [ "$TF_VAR_vm_count" -lt 1 ] || [ "$TF_VAR_vm_count" -gt 5 ]; then
+            echo "::error:: Instance count ($TF_VAR_vm_count) is out of bounds. Permitted threshold is between 1 and 5."
+            exit 1
+          fi
+        
+          # Validate Image Identifier
+          if [[ "$TF_VAR_image_name" =~ [\'\"\;\|\&\<\>\`] ]]; then
+            echo "::error:: Malicious script characters detected in image identifier. Aborting execution."
+            exit 1
+          fi
+
+          echo "Success: All inputs validated."
 
 
 
