@@ -162,7 +162,7 @@ jobs:
             echo "Executing Binary Data Copy..."
             azcopy copy "$SAS_URL" "./target_image.vhd"
       
-      - name: Enforce Remote Infrastructure Cleanup
+      - name: Remote Infrastructure Cleanup
         if: always()
         uses: azure/cli@v2
         with:
