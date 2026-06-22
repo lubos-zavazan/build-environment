@@ -28,6 +28,7 @@ jobs:
   audit_parameters:
     name: "Audit Input Parameters"
     runs-on: ubuntu-latest
+    
     steps:
       - name: Log Ingress Metadata
         run: |
@@ -43,6 +44,7 @@ jobs:
     name: "Sanitize & Validate Inputs"
     runs-on: ubuntu-latest
     needs: [audit_parameters]
+
     steps:
       - name: Evaluate System Rules
         run: |
@@ -62,6 +64,7 @@ jobs:
     environment: test
     outputs:
       azure_image_id: ${{ steps.fetch_step.outputs.IMAGE_ID }}
+
     steps:
       - name: Connect to Azure (OIDC)
         uses: azure/login@v2
@@ -94,6 +97,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: [resolve_image_metadata]
     environment: test 
+
     steps:
       - name: Connect to Azure (OIDC)
         uses: azure/login@v2
@@ -154,6 +158,7 @@ jobs:
     name: "Finalize Staging Pipeline"
     runs-on: ubuntu-latest
     needs: [export_image_artifact]
+
     steps:
     - name: Fetch Shared image
       uses: actions/download-artifact@v4
