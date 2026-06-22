@@ -21,7 +21,7 @@ jobs:
   validate_inputs:
     runs-on: ubuntu-latest
     steps:
-      - name: Sanitize Unputs
+      - name: Sanitize Inputs
         run: |
           echo "Validation..."
 
@@ -31,7 +31,6 @@ jobs:
           fi
         
         echo "Success: All input parameters passed validation."
-
 
   # Job 2: Displays input parameters
   display_parameters:
