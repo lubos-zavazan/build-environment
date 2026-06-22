@@ -130,12 +130,12 @@ jobs:
             az disk revoke-access --resource-group "MyGalleryResourceGroup" --name "TempExportDisk-${{ github.run_id }}"
             az disk delete --resource-group "MyGalleryResourceGroup" --name "TempExportDisk-${{ github.run_id }}" --yes
 
-  # Job 4: Process the inputs
+  # Job 4: Process the image
   process_deployment:
     runs-on: ubuntu-latest
     needs: download_image
     steps:
-      - name: Display final summary status
+      - name: Display status
         run: |
           echo "Pipeline processing."
           echo "END"
