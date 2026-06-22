@@ -143,10 +143,10 @@ jobs:
       - name: Upload Image Artifact to Storage
         uses: actions/upload-artifact@v4
         with:
-          name: target-vhd-payload          # Unique name for the artifact bundle
-          path: ./target_image.vhd         # Path to the file created by your azcopy command
-          retention-days: 1                # Clears the space quickly to keep your storage usage low
-          overwrite: true                  # Overwrites previous bundles if the job retries
+          name: target-vhd-payload
+          path: ./target_image.vhd
+          retention-days: 1
+          overwrite: true
 
 
   # -------------------------------------------------------------------------
@@ -160,7 +160,7 @@ jobs:
     - name: Fetch Shared image
       uses: actions/download-artifact@v4
       with:
-        name: target-vhd-payload         # Must match the exact name used in the upload step
+        name: target-vhd-payload
 
     - name: Verify Workspace File Readiness
       run: |
