@@ -28,9 +28,9 @@ jobs:
   audit_parameters:
     name: "Audit Input Parameters"
     runs-on: ubuntu-latest
-    
+
     steps:
-      - name: Log Ingress Metadata
+      - name: Log Inputs
         run: |
           echo "Target OS       : $TF_VAR_target_os"
           echo "Compute Size    : $TF_VAR_vm_size"
@@ -46,7 +46,7 @@ jobs:
     needs: [audit_parameters]
 
     steps:
-      - name: Evaluate System Rules
+      - name: Evaluate Validation Rules
         run: |
           if [ "$TF_VAR_target_os" != "linux" ]; then
             echo "::error:: Unsupported OS constraint ($TF_VAR_target_os). Pipeline restricted to Linux environments."
@@ -158,6 +158,7 @@ jobs:
     name: "Finalize Staging Pipeline"
     runs-on: ubuntu-latest
     needs: [export_image_artifact]
+    environment: test
 
     steps:
     - name: Fetch Shared image
@@ -178,6 +179,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: [process_deployment]
     environment: test
+    
     defaults:
       run:
         working-directory: ./terraform
