@@ -141,6 +141,7 @@ jobs:
     runs-on: ubuntu-latest
     environment: test
     needs: process_deployment
+    
     defaults:
       run:
         working-directory: ./terraform
