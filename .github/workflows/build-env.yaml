@@ -8,7 +8,6 @@ on:
 # GLOBAL ENVIRONMENT
 # =========================================================================
 env:
-  IMAGE_NAME: ${{ github.event.client_payload.image_name }}
   # Prefixing with TF_VAR_ injects variables straight into Terraform natively
   TF_VAR_vm_count: ${{ github.event.client_payload.copies }}
   TF_VAR_vm_size: ${{ github.event.client_payload.size }}
@@ -33,7 +32,7 @@ jobs:
           echo "Target OS       : $TARGET_OS"
           echo "Compute Size    : $TF_VAR_vm_size"
           echo "Target Instances: $TF_VAR_vm_count"
-          echo "Image Identifier: $IMAGE_NAME"
+          echo "Image Identifier: $TF_VAR_image_name"
 
   # -------------------------------------------------------------------------
   # JOB 2: INPUTS VALIDATION
@@ -78,7 +77,7 @@ jobs:
             RESOLVED_ID=$(az sig image-definition show \
               --resource-group "MyGalleryResourceGroup" \
               --gallery-name "MyComputeGallery" \
-              --gallery-image-definition "$IMAGE_NAME" \
+              --gallery-image-definition "$TF_VAR_image_name" \
               --query id --output tsv)
               
             echo "IMAGE_ID=$RESOLVED_ID" >> "$GITHUB_OUTPUT"
@@ -108,10 +107,12 @@ jobs:
             LATEST_VERSION=$(az sig image-version list \
               --resource-group "MyGalleryResourceGroup" \
               --gallery-name "MyComputeGallery" \
-              --gallery-image-definition "$IMAGE_NAME" \
+              --gallery-image-definition "$TF_VAR_image_name" \
               --query ".name" -o tsv)
             
-            IMAGE_VERSION_ID="/subscriptions/${{ secrets.AZURE_SUBSCRIPTION_ID }}/resourceGroups/MyGalleryResourceGroup/providers/Microsoft.Compute/galleries/MyComputeGallery/images/$IMAGE_NAME/versions/$LATEST_VERSION"
+            IMAGE_VERSION_ID="/subscriptions/${{ secrets.AZURE_SUBSCRIPTION_ID }}/resourceGroups/MyGalleryResourceGroup/providers/Microsoft.Compute/galleries/MyComputeGallery/images/$TF_VAR_image_name/versions/$LATEST_VERSION"
+            
+            echo "Targeting Image Version Resource ID: $IMAGE_VERSION_ID"
             
             echo "Allocating Target Export Boundary..."
             az disk create \
@@ -143,7 +144,7 @@ jobs:
     needs: [export_vhd_artifact]
     steps:
       - name: Verify Workspace Readiness
-        run: echo "Staging workspace processing completed for $IMAGE_NAME."
+        run: echo "Staging workspace processing completed for $TF_VAR_image_name."
 
   # -------------------------------------------------------------------------
   # JOB 6: TERRAFORM ORCHESTRATION
@@ -173,7 +174,7 @@ jobs:
         with:
           terraform_version: "1.9.0"
 
-      - name: Validate Module Schemes
+      - name: Validate
         run: |
           terraform init
           terraform validate
@@ -181,5 +182,5 @@ jobs:
       - name: Generate Execution Plan
         run: terraform plan -no-color
 
-      - name: Apply Infrastructural Mutations
+      - name: Apply Infrastructure Changes
         run: terraform apply -auto-approve -input=false
