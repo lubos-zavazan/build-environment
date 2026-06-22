@@ -83,6 +83,7 @@ jobs:
               
             echo "IMAGE_ID=$RESOLVED_ID" >> "$GITHUB_OUTPUT"
             echo "Successfully mapped resource descriptor: $RESOLVED_ID"
+  
 
   # -------------------------------------------------------------------------
   # JOB 4: IMAGE EXTRACTION & STAGING
@@ -136,6 +137,15 @@ jobs:
             az disk revoke-access --resource-group "MyGalleryResourceGroup" --name "TempExportDisk-${{ github.run_id }}"
             az disk delete --resource-group "MyGalleryResourceGroup" --name "TempExportDisk-${{ github.run_id }}" --yes
 
+      - name: Upload VHD Artifact to Storage
+        uses: actions/upload-artifact@v4
+        with:
+          name: target-vhd-payload          # Unique name for the artifact bundle
+          path: ./target_image.vhd         # Path to the file created by your azcopy command
+          retention-days: 1                # Clears the space quickly to keep your storage usage low
+          overwrite: true                  # Overwrites previous bundles if the job retries
+
+
   # -------------------------------------------------------------------------
   # JOB 5: IMAGE PROCESSING
   # -------------------------------------------------------------------------
@@ -144,8 +154,15 @@ jobs:
     runs-on: ubuntu-latest
     needs: [export_vhd_artifact]
     steps:
-      - name: Verify Workspace Readiness
-        run: echo "Staging workspace processing completed for $TF_VAR_image_name."
+    - name: Fetch Shared image
+      uses: actions/download-artifact@v4
+      with:
+        name: target-vhd-payload         # Must match the exact name used in the upload step
+
+    - name: Verify Workspace File Readiness
+      run: |
+          ls -lh ./target_image.vhd
+          echo "Staging workspace processing completed for $TF_VAR_image_name."
 
   # -------------------------------------------------------------------------
   # JOB 6: TERRAFORM ORCHESTRATION
