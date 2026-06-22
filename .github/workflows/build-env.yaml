@@ -1,67 +1,75 @@
 name: Build Environment Pipeline
 
 on:
-  # External trigger event sent via GitHub API from another system
   repository_dispatch:
     types: [external-build-trigger-event]
 
-# GLOBAL ENVIRONMENT VARIABLES
+# =========================================================================
+# GLOBAL ENVIRONMENT
+# =========================================================================
 env:
-  COPIES: ${{ github.event.client_payload.copies }}
-  SIZE: ${{ github.event.client_payload.size }}
-  OS: ${{ github.event.client_payload.os }}
   IMAGE_NAME: ${{ github.event.client_payload.image_name }}
+  # Prefixing with TF_VAR_ injects variables straight into Terraform natively
+  TF_VAR_vm_count: ${{ github.event.client_payload.copies }}
+  TF_VAR_vm_size: ${{ github.event.client_payload.size }}
+  TF_VAR_image_name: ${{ github.event.client_payload.image_name }}
+  # Internal tracking var
+  TARGET_OS: ${{ github.event.client_payload.os }}
 
 permissions:
-  # Azure login needs
   id-token: write
-  # Strip away the defaults
   contents: read
 
 jobs:
-  # Job 1: Displays input parameters
-  display_parameters:
+  # -------------------------------------------------------------------------
+  # JOB 1: INPUTS AUDIT
+  # -------------------------------------------------------------------------
+  audit_parameters:
+    name: "Audit Input Parameters"
     runs-on: ubuntu-latest
     steps:
-      - name: Display Input Parameters
+      - name: Log Ingress Metadata
         run: |
-          echo "COPIES=$COPIES"
-          echo "SIZE=$SIZE"
-          echo "OS=$OS"
-          echo "IMAGE_NAME=$IMAGE_NAME"
+          echo "Target OS       : $TARGET_OS"
+          echo "Compute Size    : $TF_VAR_vm_size"
+          echo "Target Instances: $TF_VAR_vm_count"
+          echo "Image Identifier: $IMAGE_NAME"
 
-  # Job 2: Validate input parameters
+  # -------------------------------------------------------------------------
+  # JOB 2: INPUTS VALIDATION
+  # -------------------------------------------------------------------------
   validate_inputs:
+    name: "Sanitize & Validate Inputs"
     runs-on: ubuntu-latest
-    needs: display_parameters
+    needs: [audit_parameters]
     steps:
-      - name: Sanitize Inputs
+      - name: Evaluate System Rules
         run: |
-          echo "Validation..."
-
-          if [ "$OS" != "linux" ]; then
-            echo "::error:: Unsupported OS ($OS). Only 'linux' is permitted."
+          if [ "$TARGET_OS" != "linux" ]; then
+            echo "::error:: Unsupported OS constraint ($TARGET_OS). Pipeline restricted to Linux environments."
             exit 1
           fi
-        
-          echo "Success: All input parameters passed validation."
+          echo "Success: All metadata policies passed authorization boundaries."
 
-  # Job 3: Get image ID from Azure Compute Gallery and set as output for downstream jobs 
-  get_image:
+  # -------------------------------------------------------------------------
+  # JOB 3: AZURE REGISTRY
+  # -------------------------------------------------------------------------
+  resolve_image_metadata:
+    name: "Query Azure Compute Gallery"
     runs-on: ubuntu-latest
-    needs: validate_inputs
+    needs: [validate_inputs]
     environment: test
     outputs:
       azure_image_id: ${{ steps.fetch_step.outputs.IMAGE_ID }}
     steps:
-      - name: Azure Login
+      - name: Connect to Azure (OIDC)
         uses: azure/login@v2
         with:
           client-id: ${{ secrets.AZURE_CLIENT_ID }}
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
-      - name: Get Azure Gallery Image Details
+      - name: Fetch Image Definition Metadata
         id: fetch_step
         uses: azure/cli@v2
         with:
@@ -73,23 +81,26 @@ jobs:
               --gallery-image-definition "$IMAGE_NAME" \
               --query id --output tsv)
               
-            echo "Successfully resolved Image Resource ID: $RESOLVED_ID"
             echo "IMAGE_ID=$RESOLVED_ID" >> "$GITHUB_OUTPUT"
+            echo "Successfully mapped resource descriptor: $RESOLVED_ID"
 
-  # Job 4: Get the latest image version
-  download_image:
+  # -------------------------------------------------------------------------
+  # JOB 4: IMAGE EXTRACTION & STAGING
+  # -------------------------------------------------------------------------
+  export_vhd_artifact:
+    name: "Stage & Extract VHD Binary"
     runs-on: ubuntu-latest
+    needs: [resolve_image_metadata]
     environment: test 
-    needs: get_image
     steps:
-      - name: Azure Login
+      - name: Connect to Azure (OIDC)
         uses: azure/login@v2
         with:
           client-id: ${{ secrets.AZURE_CLIENT_ID }}
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
-      - name: Export and Download VHD Binary
+      - name: Allocate Managed Disk, Stream Payload, and Clean Up
         uses: azure/cli@v2
         with:
           azcliversion: latest
@@ -98,20 +109,17 @@ jobs:
               --resource-group "MyGalleryResourceGroup" \
               --gallery-name "MyComputeGallery" \
               --gallery-image-definition "$IMAGE_NAME" \
-              --query "[0].name" -o tsv)
+              --query ".name" -o tsv)
             
             IMAGE_VERSION_ID="/subscriptions/${{ secrets.AZURE_SUBSCRIPTION_ID }}/resourceGroups/MyGalleryResourceGroup/providers/Microsoft.Compute/galleries/MyComputeGallery/images/$IMAGE_NAME/versions/$LATEST_VERSION"
             
-            echo "Targeting Image Version Resource ID: $IMAGE_VERSION_ID"
-            
-            echo "Creating temporary export managed disk..."
+            echo "Allocating Target Export Boundary..."
             az disk create \
               --resource-group "MyGalleryResourceGroup" \
               --name "TempExportDisk-${{ github.run_id }}" \
               --gallery-image-reference "$IMAGE_VERSION_ID" \
               --location "eastus"
               
-            echo "Generating secure downloadable SAS URL string..."
             SAS_URL=$(az disk grant-access \
               --resource-group "MyGalleryResourceGroup" \
               --name "TempExportDisk-${{ github.run_id }}" \
@@ -119,58 +127,59 @@ jobs:
               --access-level Read \
               --query accessSas -o tsv)
               
-            echo "Downloading binary VHD file..."
+            echo "Executing Binary Data Copy..."
             azcopy copy "$SAS_URL" "./target_image.vhd"
             
-            echo "Cleaning up remote cloud resources..."
+            echo "Revoking Access & Dropping Assets..."
             az disk revoke-access --resource-group "MyGalleryResourceGroup" --name "TempExportDisk-${{ github.run_id }}"
             az disk delete --resource-group "MyGalleryResourceGroup" --name "TempExportDisk-${{ github.run_id }}" --yes
 
-  # Job 5: Process the image
+  # -------------------------------------------------------------------------
+  # JOB 5: IMAGE PROCESSING
+  # -------------------------------------------------------------------------
   process_deployment:
+    name: "Finalize Staging Pipeline"
     runs-on: ubuntu-latest
-    needs: download_image
+    needs: [export_vhd_artifact]
     steps:
-      - name: Display status
-        run: |
-          echo "Pipeline processing completed for $IMAGE_NAME."
+      - name: Verify Workspace Readiness
+        run: echo "Staging workspace processing completed for $IMAGE_NAME."
 
-  # Job 6: Deploy infrastructure using Terraform
-  terraform-azure:
-    name: "Terraform Azure Apply"
+  # -------------------------------------------------------------------------
+  # JOB 6: TERRAFORM ORCHESTRATION
+  # -------------------------------------------------------------------------
+  terraform_orchestration:
+    name: "Execute Cloud Orchestration"
     runs-on: ubuntu-latest
+    needs: [process_deployment]
     environment: test
-    needs: process_deployment
-    
     defaults:
       run:
         working-directory: ./terraform
 
     steps:
-      - name: Checkout Code
+      - name: Mirror Code Repository
         uses: actions/checkout@v4
 
-      - name: Azure Login
+      - name: Connect to Azure (OIDC)
         uses: azure/login@v2
         with:
           client-id: ${{ secrets.AZURE_CLIENT_ID }}
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
-      - name: Setup Terraform
+      - name: Initialize Engine Configuration
         uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: "1.9.0"
 
-      - name: Terraform Init
-        run: terraform init
+      - name: Validate Module Schemes
+        run: |
+          terraform init
+          terraform validate
 
-      - name: Terraform Validate
-        run: terraform validate
+      - name: Generate Execution Plan
+        run: terraform plan -no-color
 
-      - name: Terraform Plan
-        # Pass the global env vars as tf-vars so Terraform can capture them natively
-        run: terraform plan -no-color -var="vm_size=$SIZE" -var="image_name=$IMAGE_NAME" -var="vm_count=$COPIES"
-
-      - name: Terraform Apply
-        run: terraform apply -auto-approve -input=false -var="vm_size=$SIZE" -var="image_name=$IMAGE_NAME" -var="vm_count=$COPIES"
+      - name: Apply Infrastructural Mutations
+        run: terraform apply -auto-approve -input=false
