@@ -23,9 +23,9 @@ permissions:
 
 jobs:
   # -------------------------------------------------------------------------
-  # JOB 1: INPUTS AUDIT
+  # JOB 1: INPUTS AUDIT & VALIDATION
   # -------------------------------------------------------------------------
-  audit_parameters:
+  input_parameters:
     name: "Audit Input Parameters"
     runs-on: ubuntu-latest
 
@@ -37,30 +37,29 @@ jobs:
           echo "Target Instances: $TF_VAR_vm_count"
           echo "Image Identifier: $TF_VAR_image_name"
 
-  # -------------------------------------------------------------------------
-  # JOB 2: INPUTS VALIDATION
-  # -------------------------------------------------------------------------
-  validate_inputs:
-    name: "Sanitize & Validate Inputs"
-    runs-on: ubuntu-latest
-    needs: [audit_parameters]
-
-    steps:
-      - name: Evaluate Validation Rules
+      - name: Validation Rules
         run: |
+          if [[ "$TF_VAR_image_name" =~ [\'\"\;\|\&\<\>\`] ]]; then
+            echo "::error:: Malicious script characters detected in image identifier. Aborting execution."
+            exit 1
+          fi
+          
           if [ "$TF_VAR_target_os" != "linux" ]; then
             echo "::error:: Unsupported OS constraint ($TF_VAR_target_os). Pipeline restricted to Linux environments."
             exit 1
           fi
+
           echo "Success: All metadata policies passed authorization boundaries."
 
+
+
   # -------------------------------------------------------------------------
-  # JOB 3: AZURE IMAGE GALLERY
+  # JOB 2: AZURE IMAGE GALLERY
   # -------------------------------------------------------------------------
   resolve_image_metadata:
     name: "Query Azure Compute Gallery"
     runs-on: ubuntu-latest
-    needs: [validate_inputs]
+    needs: [input_parameters]
     environment: test
     outputs:
       azure_image_id: ${{ steps.fetch_step.outputs.IMAGE_ID }}
@@ -90,7 +89,7 @@ jobs:
   
 
   # -------------------------------------------------------------------------
-  # JOB 4: IMAGE EXTRACTION & STAGING
+  # JOB 3: IMAGE EXTRACTION & STAGING
   # -------------------------------------------------------------------------
   export_image_artifact:
     name: "Stage & Extract VHD Binary"
@@ -106,7 +105,7 @@ jobs:
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
-      - name: Allocate Managed Disk, Stream Payload, and Clean Up
+      - name: Allocate Managed Disk, Stream Payload
         uses: azure/cli@v2
         with:
           azcliversion: latest
@@ -137,10 +136,16 @@ jobs:
               
             echo "Executing Binary Data Copy..."
             azcopy copy "$SAS_URL" "./target_image.vhd"
-            
-            echo "Revoking Access & Dropping Assets..."
-            az disk revoke-access --resource-group "MyGalleryResourceGroup" --name "TempExportDisk-${{ github.run_id }}"
-            az disk delete --resource-group "MyGalleryResourceGroup" --name "TempExportDisk-${{ github.run_id }}" --yes
+      
+      - name: Enforce Remote Infrastructure Cleanup
+        if: always()
+        uses: azure/cli@v2
+        with:
+          azcliversion: latest
+          inlineScript: |
+            echo "Cleaning up temporary cloud resources..."
+            az disk revoke-access --resource-group "MyGalleryResourceGroup" --name "TempExportDisk-${{ github.run_id }}" || true
+            az disk delete --resource-group "MyGalleryResourceGroup" --name "TempExportDisk-${{ github.run_id }}" --yes || true
 
       - name: Upload Image Artifact to Storage
         uses: actions/upload-artifact@v4
@@ -152,7 +157,7 @@ jobs:
 
 
   # -------------------------------------------------------------------------
-  # JOB 5: IMAGE PROCESSING
+  # JOB 4: IMAGE PROCESSING
   # -------------------------------------------------------------------------
   process_deployment:
     name: "Finalize Staging Pipeline"
@@ -172,14 +177,17 @@ jobs:
           echo "Staging workspace processing completed for $TF_VAR_image_name."
 
   # -------------------------------------------------------------------------
-  # JOB 6: TERRAFORM ORCHESTRATION
+  # JOB 5: TERRAFORM ORCHESTRATION
   # -------------------------------------------------------------------------
   terraform_orchestration:
     name: "Execute Cloud Orchestration"
     runs-on: ubuntu-latest
-    needs: [process_deployment]
+    needs: [process_deployment, resolve_image_metadata]
     environment: test
-    
+
+    env:
+      TF_VAR_azure_image_id: ${{ needs.resolve_image_metadata.outputs.azure_image_id }}
+
     defaults:
       run:
         working-directory: ./terraform
@@ -195,18 +203,18 @@ jobs:
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
-      - name: Initialize Engine Configuration
+      - name: Initialize Terraform Engine
         uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: "1.9.0"
 
-      - name: Validate
+      - name: Validate Terraform Configuration
         run: |
           terraform init
           terraform validate
 
       - name: Generate Execution Plan
-        run: terraform plan -no-color
+        run: terraform plan -no-color -out=tfplan
 
       - name: Apply Infrastructure Changes
-        run: terraform apply -auto-approve -input=false
+        run: terraform apply -input=false tfplan
