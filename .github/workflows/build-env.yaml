@@ -1,55 +1,53 @@
 name: Build Environment Pipeline
 
 on:
-  workflow_dispatch:
-    inputs:
-      number_of_copies:
-        description: 'Number of copies to generate'
-        required: true
-        default: '1'
-        type: string
-      size:
-        description: 'Select the size'
-        required: true
-        default: 'medium'
-        type: choice
-        options:
-          - small
-          - medium
-          - large
-      os:
-        description: 'Target Operating System'
-        required: true
-        default: 'Linux'
-        type: string
-      image_name:
-        description: 'The name of the Azure Gallery Image'
-        required: true
-        type: string
+  # External trigger event sent via GitHub API from another system
+  repository_dispatch:
+    types: [external-build-trigger-event]
+
+# GLOBAL ENVIRONMENT VARIABLES
+env:
+  COPIES: ${{ github.event.client_payload.copies }}
+  SIZE: ${{ github.event.client_payload.size }}
+  OS: ${{ github.event.client_payload.os }}
+  IMAGE_NAME: ${{ github.event.client_payload.image_name }}
 
 permissions:
   id-token: write
   contents: read
 
 jobs:
-  # Job 1: Log all received inputs
+  # Job 1: Validate input parameters
+  validate_inputs:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Sanitize Unputs
+        run: |
+          echo "Validation..."
+
+          if [ "$OS" != "linux" ]; then
+            echo "::error:: Unsupported OS ($OS). Only 'linux' is permitted."
+            exit 1
+          fi
+        
+        echo "Success: All input parameters passed validation."
+
+
+  # Job 2: Displays input parameters
   display_parameters:
     runs-on: ubuntu-latest
     steps:
-      - name: Display all initial input parameters
+      - name: Display Input Parameters
         run: |
-          echo "==== Received Input Parameters ===="
-          echo "Copies: ${{ github.event.inputs.number_of_copies }}"
-          echo "Size: ${{ github.event.inputs.size }}"
-          echo "OS: ${{ github.event.inputs.os }}"
-          echo "Image Name: ${{ github.event.inputs.image_name }}"
-          echo "==================================="
+          echo "COPIES=$COPIES"
+          echo "SIZE=$SIZE"
+          echo "OS=$OS"
+          echo "IMAGE_NAME=$IMAGE_NAME"
 
-  # Job 2: Get image reference definition from Azure
+  # Job 3: Get image ID from Azure Compute Gallery and set as output for downstream jobs 
   get_image:
     runs-on: ubuntu-latest
-    needs: display_parameters
-    environment: test # Get secrets from the "test" environment
+    environment: test
     outputs:
       azure_image_id: ${{ steps.fetch_step.outputs.IMAGE_ID }}
     steps:
@@ -66,20 +64,19 @@ jobs:
         with:
           azcliversion: latest
           inlineScript: |
-            # Fetch the base resource ID of the image definition
             RESOLVED_ID=$(az sig image-definition show \
               --resource-group "MyGalleryResourceGroup" \
               --gallery-name "MyComputeGallery" \
-              --gallery-image-definition "${{ github.event.inputs.image_name }}" \
+              --gallery-image-definition "$IMAGE_NAME" \
               --query id --output tsv)
               
             echo "Successfully resolved Image Resource ID: $RESOLVED_ID"
             echo "IMAGE_ID=$RESOLVED_ID" >> "$GITHUB_OUTPUT"
 
-  # Job 3: Download the binary image locally
+  # Job 4: Get the latest image version
   download_image:
     runs-on: ubuntu-latest
-    needs: get_image
+    environment: test 
     steps:
       - name: Azure Login
         uses: azure/login@v2
@@ -93,18 +90,16 @@ jobs:
         with:
           azcliversion: latest
           inlineScript: |
-            # 1. Fetch the latest concrete version identifier for the image definition
             LATEST_VERSION=$(az sig image-version list \
               --resource-group "MyGalleryResourceGroup" \
               --gallery-name "MyComputeGallery" \
-              --gallery-image-definition "${{ github.event.inputs.image_name }}" \
+              --gallery-image-definition "$IMAGE_NAME" \
               --query "[0].name" -o tsv)
             
-            IMAGE_VERSION_ID="/subscriptions/${{ secrets.AZURE_SUBSCRIPTION_ID }}/resourceGroups/MyGalleryResourceGroup/providers/Microsoft.Compute/galleries/MyComputeGallery/images/${{ github.event.inputs.image_name }}/versions/$LATEST_VERSION"
+            IMAGE_VERSION_ID="/subscriptions/${{ secrets.AZURE_SUBSCRIPTION_ID }}/resourceGroups/MyGalleryResourceGroup/providers/Microsoft.Compute/galleries/MyComputeGallery/images/$IMAGE_NAME/versions/$LATEST_VERSION"
             
             echo "Targeting Image Version Resource ID: $IMAGE_VERSION_ID"
             
-            # 2. Export the version disk reference to a standalone target managed disk
             echo "Creating temporary export managed disk..."
             az disk create \
               --resource-group "MyGalleryResourceGroup" \
@@ -112,7 +107,6 @@ jobs:
               --gallery-image-reference "$IMAGE_VERSION_ID" \
               --location "eastus"
               
-            # 3. Request a temporary Read SAS Token URL link valid for 3600 seconds (1 hour)
             echo "Generating secure downloadable SAS URL string..."
             SAS_URL=$(az disk grant-access \
               --resource-group "MyGalleryResourceGroup" \
@@ -121,21 +115,56 @@ jobs:
               --access-level Read \
               --query accessSas -o tsv)
               
-            # 4. Stream the raw operating system payload into the local workspace file block
             echo "Downloading binary VHD file..."
             azcopy copy "$SAS_URL" "./target_image.vhd"
             
-            # 5. Clean up Azure assets by revoking disk access permissions and deleting the disk
             echo "Cleaning up remote cloud resources..."
             az disk revoke-access --resource-group "MyGalleryResourceGroup" --name "TempExportDisk-${{ github.run_id }}"
             az disk delete --resource-group "MyGalleryResourceGroup" --name "TempExportDisk-${{ github.run_id }}" --yes
 
-  # Job 4: Process the image
+  # Job 5: Process the image
   process_deployment:
     runs-on: ubuntu-latest
-    needs: download_image
     steps:
       - name: Display status
         run: |
-          echo "Pipeline processing."
-          echo "END"
+          echo "Pipeline processing completed for $IMAGE_NAME."
+
+  # Job 6: Deploy infrastructure using Terraform
+  terraform-azure:
+    name: "Terraform Azure Apply"
+    runs-on: ubuntu-latest
+    environment: test
+    
+    defaults:
+      run:
+        working-directory: ./terraform
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Azure Login
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.9.0"
+
+      - name: Terraform Init
+        run: terraform init
+
+      - name: Terraform Validate
+        run: terraform validate
+
+      - name: Terraform Plan
+        # Pass the global env vars as tf-vars so Terraform can capture them natively
+        run: terraform plan -no-color -var="vm_size=$SIZE" -var="vm_count=$COPIES"
+
+      - name: Terraform Apply
+        run: terraform apply -auto-approve -input=false -var="vm_size=$SIZE" -var="vm_count=$COPIES"
