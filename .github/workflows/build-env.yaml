@@ -8,14 +8,15 @@ on:
 # GLOBAL ENVIRONMENT
 # =========================================================================
 env:
-  # Prefixing with TF_VAR_ injects variables straight into Terraform natively
+
   TF_VAR_vm_count: ${{ github.event.client_payload.copies }}
   TF_VAR_vm_size: ${{ github.event.client_payload.size }}
   TF_VAR_image_name: ${{ github.event.client_payload.image_name }}
-  # Internal tracking var
+
   TARGET_OS: ${{ github.event.client_payload.os }}
 
 permissions:
+  # For Azure login
   id-token: write
   contents: read
 
