@@ -1,5 +1,8 @@
 name: Build Environment Pipeline
 
+# -------------------------------------------------------------------------
+# TRIGGERING EVENTS
+# -------------------------------------------------------------------------
 on:
   repository_dispatch:
     types: [external-build-trigger-event]
