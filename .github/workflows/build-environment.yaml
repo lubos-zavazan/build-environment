@@ -91,7 +91,7 @@ jobs:
   # -------------------------------------------------------------------------
   # JOB 4: IMAGE EXTRACTION & STAGING
   # -------------------------------------------------------------------------
-  export_vhd_artifact:
+  export_image_artifact:
     name: "Stage & Extract VHD Binary"
     runs-on: ubuntu-latest
     needs: [resolve_image_metadata]
@@ -140,7 +140,7 @@ jobs:
             az disk revoke-access --resource-group "MyGalleryResourceGroup" --name "TempExportDisk-${{ github.run_id }}"
             az disk delete --resource-group "MyGalleryResourceGroup" --name "TempExportDisk-${{ github.run_id }}" --yes
 
-      - name: Upload VHD Artifact to Storage
+      - name: Upload Image Artifact to Storage
         uses: actions/upload-artifact@v4
         with:
           name: target-vhd-payload          # Unique name for the artifact bundle
@@ -155,7 +155,7 @@ jobs:
   process_deployment:
     name: "Finalize Staging Pipeline"
     runs-on: ubuntu-latest
-    needs: [export_vhd_artifact]
+    needs: [export_image_artifact]
     steps:
     - name: Fetch Shared image
       uses: actions/download-artifact@v4
