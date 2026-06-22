@@ -16,7 +16,7 @@ env:
   TF_VAR_vm_size: ${{ github.event.client_payload.size }}
   TF_VAR_image_name: ${{ github.event.client_payload.image_name }}
 
-  TARGET_OS: ${{ github.event.client_payload.os }}
+  TF_VAR_target_os: ${{ github.event.client_payload.os }}
 
 permissions:
   # For Azure login
@@ -33,7 +33,7 @@ jobs:
     steps:
       - name: Log Ingress Metadata
         run: |
-          echo "Target OS       : $TARGET_OS"
+          echo "Target OS       : $TF_VAR_target_os"
           echo "Compute Size    : $TF_VAR_vm_size"
           echo "Target Instances: $TF_VAR_vm_count"
           echo "Image Identifier: $TF_VAR_image_name"
@@ -48,8 +48,8 @@ jobs:
     steps:
       - name: Evaluate System Rules
         run: |
-          if [ "$TARGET_OS" != "linux" ]; then
-            echo "::error:: Unsupported OS constraint ($TARGET_OS). Pipeline restricted to Linux environments."
+          if [ "$TF_VAR_target_os" != "linux" ]; then
+            echo "::error:: Unsupported OS constraint ($TF_VAR_target_os). Pipeline restricted to Linux environments."
             exit 1
           fi
           echo "Success: All metadata policies passed authorization boundaries."
