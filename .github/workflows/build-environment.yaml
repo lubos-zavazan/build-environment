@@ -75,7 +75,7 @@ jobs:
           echo "Success: All inputs validated."
 
   # -------------------------------------------------------------------------
-  # JOB 2: AZURE IMAGE GALLERY
+  # JOB 2: AZURE COMPUTE GALLERY
   # -------------------------------------------------------------------------
   resolve_image_metadata:
     name: "Query Azure Compute Gallery"
