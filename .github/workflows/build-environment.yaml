@@ -52,7 +52,7 @@ jobs:
           echo "Success: All metadata policies passed authorization boundaries."
 
   # -------------------------------------------------------------------------
-  # JOB 3: AZURE REGISTRY
+  # JOB 3: AZURE IMAGE GALLERY
   # -------------------------------------------------------------------------
   resolve_image_metadata:
     name: "Query Azure Compute Gallery"
