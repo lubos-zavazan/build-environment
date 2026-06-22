@@ -13,7 +13,9 @@ env:
   IMAGE_NAME: ${{ github.event.client_payload.image_name }}
 
 permissions:
+  # Azure login needs
   id-token: write
+  # Strip away the defaults
   contents: read
 
 jobs:
