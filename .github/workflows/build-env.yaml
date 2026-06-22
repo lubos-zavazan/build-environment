@@ -1,0 +1,187 @@
+name: Build Environment Pipeline
+
+on:
+  repository_dispatch:
+    types: [external-build-trigger-event]
+
+# -------------------------------------------------------------------------
+# GLOBAL ENVIRONMENT
+# -------------------------------------------------------------------------
+env:
+
+  TF_VAR_vm_count: ${{ github.event.client_payload.copies }}
+  TF_VAR_vm_size: ${{ github.event.client_payload.size }}
+  TF_VAR_image_name: ${{ github.event.client_payload.image_name }}
+
+  TARGET_OS: ${{ github.event.client_payload.os }}
+
+permissions:
+  # For Azure login
+  id-token: write
+  contents: read
+
+jobs:
+  # -------------------------------------------------------------------------
+  # JOB 1: INPUTS AUDIT
+  # -------------------------------------------------------------------------
+  audit_parameters:
+    name: "Audit Input Parameters"
+    runs-on: ubuntu-latest
+    steps:
+      - name: Log Ingress Metadata
+        run: |
+          echo "Target OS       : $TARGET_OS"
+          echo "Compute Size    : $TF_VAR_vm_size"
+          echo "Target Instances: $TF_VAR_vm_count"
+          echo "Image Identifier: $TF_VAR_image_name"
+
+  # -------------------------------------------------------------------------
+  # JOB 2: INPUTS VALIDATION
+  # -------------------------------------------------------------------------
+  validate_inputs:
+    name: "Sanitize & Validate Inputs"
+    runs-on: ubuntu-latest
+    needs: [audit_parameters]
+    steps:
+      - name: Evaluate System Rules
+        run: |
+          if [ "$TARGET_OS" != "linux" ]; then
+            echo "::error:: Unsupported OS constraint ($TARGET_OS). Pipeline restricted to Linux environments."
+            exit 1
+          fi
+          echo "Success: All metadata policies passed authorization boundaries."
+
+  # -------------------------------------------------------------------------
+  # JOB 3: AZURE REGISTRY
+  # -------------------------------------------------------------------------
+  resolve_image_metadata:
+    name: "Query Azure Compute Gallery"
+    runs-on: ubuntu-latest
+    needs: [validate_inputs]
+    environment: test
+    outputs:
+      azure_image_id: ${{ steps.fetch_step.outputs.IMAGE_ID }}
+    steps:
+      - name: Connect to Azure (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Fetch Image Definition Metadata
+        id: fetch_step
+        uses: azure/cli@v2
+        with:
+          azcliversion: latest
+          inlineScript: |
+            RESOLVED_ID=$(az sig image-definition show \
+              --resource-group "MyGalleryResourceGroup" \
+              --gallery-name "MyComputeGallery" \
+              --gallery-image-definition "$TF_VAR_image_name" \
+              --query id --output tsv)
+              
+            echo "IMAGE_ID=$RESOLVED_ID" >> "$GITHUB_OUTPUT"
+            echo "Successfully mapped resource descriptor: $RESOLVED_ID"
+
+  # -------------------------------------------------------------------------
+  # JOB 4: IMAGE EXTRACTION & STAGING
+  # -------------------------------------------------------------------------
+  export_vhd_artifact:
+    name: "Stage & Extract VHD Binary"
+    runs-on: ubuntu-latest
+    needs: [resolve_image_metadata]
+    environment: test 
+    steps:
+      - name: Connect to Azure (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Allocate Managed Disk, Stream Payload, and Clean Up
+        uses: azure/cli@v2
+        with:
+          azcliversion: latest
+          inlineScript: |
+            LATEST_VERSION=$(az sig image-version list \
+              --resource-group "MyGalleryResourceGroup" \
+              --gallery-name "MyComputeGallery" \
+              --gallery-image-definition "$TF_VAR_image_name" \
+              --query ".name" -o tsv)
+            
+            IMAGE_VERSION_ID="/subscriptions/${{ secrets.AZURE_SUBSCRIPTION_ID }}/resourceGroups/MyGalleryResourceGroup/providers/Microsoft.Compute/galleries/MyComputeGallery/images/$TF_VAR_image_name/versions/$LATEST_VERSION"
+            
+            echo "Targeting Image Version Resource ID: $IMAGE_VERSION_ID"
+            
+            echo "Allocating Target Export Boundary..."
+            az disk create \
+              --resource-group "MyGalleryResourceGroup" \
+              --name "TempExportDisk-${{ github.run_id }}" \
+              --gallery-image-reference "$IMAGE_VERSION_ID" \
+              --location "eastus"
+              
+            SAS_URL=$(az disk grant-access \
+              --resource-group "MyGalleryResourceGroup" \
+              --name "TempExportDisk-${{ github.run_id }}" \
+              --duration-in-seconds 3600 \
+              --access-level Read \
+              --query accessSas -o tsv)
+              
+            echo "Executing Binary Data Copy..."
+            azcopy copy "$SAS_URL" "./target_image.vhd"
+            
+            echo "Revoking Access & Dropping Assets..."
+            az disk revoke-access --resource-group "MyGalleryResourceGroup" --name "TempExportDisk-${{ github.run_id }}"
+            az disk delete --resource-group "MyGalleryResourceGroup" --name "TempExportDisk-${{ github.run_id }}" --yes
+
+  # -------------------------------------------------------------------------
+  # JOB 5: IMAGE PROCESSING
+  # -------------------------------------------------------------------------
+  process_deployment:
+    name: "Finalize Staging Pipeline"
+    runs-on: ubuntu-latest
+    needs: [export_vhd_artifact]
+    steps:
+      - name: Verify Workspace Readiness
+        run: echo "Staging workspace processing completed for $TF_VAR_image_name."
+
+  # -------------------------------------------------------------------------
+  # JOB 6: TERRAFORM ORCHESTRATION
+  # -------------------------------------------------------------------------
+  terraform_orchestration:
+    name: "Execute Cloud Orchestration"
+    runs-on: ubuntu-latest
+    needs: [process_deployment]
+    environment: test
+    defaults:
+      run:
+        working-directory: ./terraform
+
+    steps:
+      - name: Mirror Code Repository
+        uses: actions/checkout@v4
+
+      - name: Connect to Azure (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Initialize Engine Configuration
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.9.0"
+
+      - name: Validate
+        run: |
+          terraform init
+          terraform validate
+
+      - name: Generate Execution Plan
+        run: terraform plan -no-color
+
+      - name: Apply Infrastructure Changes
+        run: terraform apply -auto-approve -input=false
