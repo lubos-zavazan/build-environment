@@ -19,22 +19,7 @@ permissions:
   contents: read
 
 jobs:
-  # Job 1: Validate input parameters
-  validate_inputs:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Sanitize Inputs
-        run: |
-          echo "Validation..."
-
-          if [ "$OS" != "linux" ]; then
-            echo "::error:: Unsupported OS ($OS). Only 'linux' is permitted."
-            exit 1
-          fi
-        
-        echo "Success: All input parameters passed validation."
-
-  # Job 2: Displays input parameters
+  # Job 1: Displays input parameters
   display_parameters:
     runs-on: ubuntu-latest
     steps:
@@ -45,9 +30,26 @@ jobs:
           echo "OS=$OS"
           echo "IMAGE_NAME=$IMAGE_NAME"
 
+  # Job 2: Validate input parameters
+  validate_inputs:
+    runs-on: ubuntu-latest
+    needs: display_parameters
+    steps:
+      - name: Sanitize Inputs
+        run: |
+          echo "Validation..."
+
+          if [ "$OS" != "linux" ]; then
+            echo "::error:: Unsupported OS ($OS). Only 'linux' is permitted."
+            exit 1
+          fi
+        
+          echo "Success: All input parameters passed validation."
+
   # Job 3: Get image ID from Azure Compute Gallery and set as output for downstream jobs 
   get_image:
     runs-on: ubuntu-latest
+    needs: validate_inputs
     environment: test
     outputs:
       azure_image_id: ${{ steps.fetch_step.outputs.IMAGE_ID }}
@@ -78,6 +80,7 @@ jobs:
   download_image:
     runs-on: ubuntu-latest
     environment: test 
+    needs: get_image
     steps:
       - name: Azure Login
         uses: azure/login@v2
@@ -126,6 +129,7 @@ jobs:
   # Job 5: Process the image
   process_deployment:
     runs-on: ubuntu-latest
+    needs: download_image
     steps:
       - name: Display status
         run: |
@@ -136,7 +140,7 @@ jobs:
     name: "Terraform Azure Apply"
     runs-on: ubuntu-latest
     environment: test
-    
+    needs: process_deployment
     defaults:
       run:
         working-directory: ./terraform
@@ -165,7 +169,7 @@ jobs:
 
       - name: Terraform Plan
         # Pass the global env vars as tf-vars so Terraform can capture them natively
-        run: terraform plan -no-color -var="vm_size=$SIZE" -var="vm_count=$COPIES"
+        run: terraform plan -no-color -var="vm_size=$SIZE" -var="image_name=$IMAGE_NAME" -var="vm_count=$COPIES"
 
       - name: Terraform Apply
-        run: terraform apply -auto-approve -input=false -var="vm_size=$SIZE" -var="vm_count=$COPIES"
+        run: terraform apply -auto-approve -input=false -var="vm_size=$SIZE" -var="image_name=$IMAGE_NAME" -var="vm_count=$COPIES"
