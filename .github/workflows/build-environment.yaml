@@ -8,7 +8,7 @@ on:
     types: [external-build-trigger-event]
 
 # -------------------------------------------------------------------------
-# GLOBAL ENVIRONMENT - INCOMING PAYLOAD VARIABLES
+# GLOBAL ENVIRONMENT - TRIGGER PAYLOAD VARIABLES
 # -------------------------------------------------------------------------
 env:
   TF_VAR_vm_count: ${{ github.event.client_payload.copies }}
