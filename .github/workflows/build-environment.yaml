@@ -22,7 +22,7 @@ permissions:
 
 jobs:
   # -------------------------------------------------------------------------
-  # JOB 1: INPUTS AUDIT & VALIDATION
+  # JOB: INPUTS AUDIT & VALIDATION
   # -------------------------------------------------------------------------
   input_parameters:
     name: "Audit Input Parameters"
@@ -36,15 +36,15 @@ jobs:
           echo "Target Instances: $TF_VAR_vm_count"
           echo "Image Identifier: $TF_VAR_image_name"
 
-      - name: Validation Rules
+      - name: Validate OS
         run: |
-          # Validate OS
           if [ "$TF_VAR_target_os" != "linux" ]; then
             echo "::error:: Unsupported OS constraint ($TF_VAR_target_os). Pipeline restricted to Linux environments."
             exit 1
           fi
 
-          # Validate Compute Size
+      - name: Validate Compute Size
+        run: |
           case "${TF_VAR_vm_size,,}" in
             small|middle|large)
               echo "Validated: Compute size choice ($TF_VAR_vm_size) matches policy."
@@ -54,8 +54,9 @@ jobs:
               exit 1
               ;;
           esac
-        
-          # Validate Instance Count
+
+      - name: Validate Instance Count
+        run: |
           if ! [[ "$TF_VAR_vm_count" =~ ^[0-9]+$ ]]; then
             echo "::error:: Invalid format for instance count ($TF_VAR_vm_count). Value must be a valid integer."
             exit 1
@@ -65,17 +66,16 @@ jobs:
             echo "::error:: Instance count ($TF_VAR_vm_count) is out of bounds. Permitted threshold is between 1 and 5."
             exit 1
           fi
-        
-          # Validate Image Identifier
+
+      - name: Validate Image Identifier
+        run: |
           if [[ "$TF_VAR_image_name" =~ [\'\"\;\|\&\<\>\`] ]]; then
             echo "::error:: Malicious script characters detected in image identifier. Aborting execution."
             exit 1
           fi
 
-          echo "Success: All inputs validated."
-
   # -------------------------------------------------------------------------
-  # JOB 2: AZURE COMPUTE GALLERY
+  # JOB: AZURE COMPUTE GALLERY
   # -------------------------------------------------------------------------
   resolve_image_metadata:
     name: "Query Azure Compute Gallery"
@@ -107,103 +107,18 @@ jobs:
               
             echo "IMAGE_ID=$RESOLVED_ID" >> "$GITHUB_OUTPUT"
             echo "Successfully mapped resource descriptor: $RESOLVED_ID"
-  
+
+      - name: Log Resolved Image ID
+        run: |
+          echo "Resolved Azure Image ID: ${{ steps.fetch_step.outputs.IMAGE_ID }}"
 
   # -------------------------------------------------------------------------
-  # JOB 3: IMAGE EXTRACTION & STAGING
+  # JOB: TERRAFORM PLAN  (runs on every commit)
   # -------------------------------------------------------------------------
-  export_image_artifact:
-    name: "Stage & Extract VHD Binary"
+  terraform_plan:
+    name: "Terraform Plan"
     runs-on: ubuntu-latest
     needs: [resolve_image_metadata]
-    environment: test 
-
-    steps:
-      - name: Connect to Azure (OIDC)
-        uses: azure/login@v2
-        with:
-          client-id: ${{ secrets.AZURE_CLIENT_ID }}
-          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
-          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-
-      - name: Allocate Managed Disk, Stream Payload
-        uses: azure/cli@v2
-        with:
-          azcliversion: latest
-          inlineScript: |
-            LATEST_VERSION=$(az sig image-version list \
-              --resource-group "MyGalleryResourceGroup" \
-              --gallery-name "MyComputeGallery" \
-              --gallery-image-definition "$TF_VAR_image_name" \
-              --query ".name" -o tsv)
-            
-            IMAGE_VERSION_ID="/subscriptions/${{ secrets.AZURE_SUBSCRIPTION_ID }}/resourceGroups/MyGalleryResourceGroup/providers/Microsoft.Compute/galleries/MyComputeGallery/images/$TF_VAR_image_name/versions/$LATEST_VERSION"
-            
-            echo "Targeting Image Version Resource ID: $IMAGE_VERSION_ID"
-            
-            echo "Allocating Target Export Boundary..."
-            az disk create \
-              --resource-group "MyGalleryResourceGroup" \
-              --name "TempExportDisk-${{ github.run_id }}" \
-              --gallery-image-reference "$IMAGE_VERSION_ID" \
-              --location "eastus"
-              
-            SAS_URL=$(az disk grant-access \
-              --resource-group "MyGalleryResourceGroup" \
-              --name "TempExportDisk-${{ github.run_id }}" \
-              --duration-in-seconds 3600 \
-              --access-level Read \
-              --query accessSas -o tsv)
-              
-            echo "Executing Binary Data Copy..."
-            azcopy copy "$SAS_URL" "./target_image.vhd"
-      
-      - name: Remote Infrastructure Cleanup
-        if: always()
-        uses: azure/cli@v2
-        with:
-          azcliversion: latest
-          inlineScript: |
-            echo "Cleaning up temporary cloud resources..."
-            az disk revoke-access --resource-group "MyGalleryResourceGroup" --name "TempExportDisk-${{ github.run_id }}" || true
-            az disk delete --resource-group "MyGalleryResourceGroup" --name "TempExportDisk-${{ github.run_id }}" --yes || true
-
-      - name: Upload Image Artifact to Storage
-        uses: actions/upload-artifact@v4
-        with:
-          name: target-vhd-payload
-          path: ./target_image.vhd
-          retention-days: 5
-          overwrite: true
-
-
-  # -------------------------------------------------------------------------
-  # JOB 4: IMAGE PROCESSING
-  # -------------------------------------------------------------------------
-  process_deployment:
-    name: "Finalize Staging Pipeline"
-    runs-on: ubuntu-latest
-    needs: [export_image_artifact]
-    environment: test
-
-    steps:
-    - name: Fetch Shared image
-      uses: actions/download-artifact@v4
-      with:
-        name: target-vhd-payload
-
-    - name: Verify Workspace File Readiness
-      run: |
-          ls -lh ./target_image.vhd
-          echo "Staging workspace processing completed for $TF_VAR_image_name."
-
-  # -------------------------------------------------------------------------
-  # JOB 5: TERRAFORM ORCHESTRATION
-  # -------------------------------------------------------------------------
-  terraform_orchestration:
-    name: "Execute Cloud Orchestration"
-    runs-on: ubuntu-latest
-    needs: [process_deployment, resolve_image_metadata]
     environment: test
 
     env:
@@ -236,6 +151,53 @@ jobs:
 
       - name: Generate Execution Plan
         run: terraform plan -no-color -out=tfplan
+
+      - name: Upload Plan Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: tfplan
+          path: ./terraform/tfplan
+
+  # -------------------------------------------------------------------------
+  # JOB: TERRAFORM APPLY  (merge request — requires environment approval)
+  # -------------------------------------------------------------------------
+  terraform_apply:
+    name: "Terraform Apply"
+    runs-on: ubuntu-latest
+    needs: [terraform_plan, resolve_image_metadata]
+    environment: production
+
+    env:
+      TF_VAR_azure_image_id: ${{ needs.resolve_image_metadata.outputs.azure_image_id }}
+
+    defaults:
+      run:
+        working-directory: ./terraform
+
+    steps:
+      - name: Mirror Code Repository
+        uses: actions/checkout@v4
+
+      - name: Connect to Azure
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Initialize Terraform Engine
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.15.6"
+
+      - name: Initialize Terraform Backend
+        run: terraform init
+
+      - name: Download Plan Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: tfplan
+          path: ./terraform
 
       - name: Apply Infrastructure Changes
         run: terraform apply -input=false tfplan
