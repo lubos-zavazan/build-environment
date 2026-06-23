@@ -75,7 +75,7 @@ jobs:
           fi
 
   # -------------------------------------------------------------------------
-  # JOB: AZURE COMPUTE GALLERY
+  # JOB: AZURE COMPUTE GALLERY - GET IMAGE ID
   # -------------------------------------------------------------------------
   resolve_image_metadata:
     name: "Query Azure Compute Gallery"
