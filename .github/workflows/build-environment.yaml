@@ -15,6 +15,7 @@ env:
   TF_VAR_vm_size: ${{ github.event.client_payload.size }}
   TF_VAR_image_name: ${{ github.event.client_payload.image_name }}
   TF_VAR_target_os: ${{ github.event.client_payload.os }}
+  TF_VAR_run_identifier: ${{ github.event.client_payload.run_identifier }}
 
 permissions:
   id-token: write
@@ -35,6 +36,7 @@ jobs:
           echo "Compute Size    : $TF_VAR_vm_size"
           echo "Target Instances: $TF_VAR_vm_count"
           echo "Image Identifier: $TF_VAR_image_name"
+          echo "Run Identifier  : $TF_VAR_run_identifier"
 
       - name: Validate OS
         run: |
@@ -71,6 +73,18 @@ jobs:
         run: |
           if [[ "$TF_VAR_image_name" =~ [\'\"\;\|\&\<\>\`] ]]; then
             echo "::error:: Malicious script characters detected in image identifier. Aborting execution."
+            exit 1
+          fi
+
+      - name: Validate Run Identifier
+        run: |
+          if [ -z "$TF_VAR_run_identifier" ]; then
+            echo "::error:: Run identifier is missing or empty. A valid run identifier must be provided."
+            exit 1
+          fi
+
+          if ! [[ "$TF_VAR_run_identifier" =~ ^[a-zA-Z0-9_-]+$ ]]; then
+            echo "::error:: Invalid run identifier ($TF_VAR_run_identifier). Only alphanumeric characters, hyphens, and underscores are permitted."
             exit 1
           fi
 
@@ -201,3 +215,12 @@ jobs:
 
       - name: Apply Infrastructure Changes
         run: terraform apply -input=false tfplan
+
+      - name: Capture Terraform Outputs
+        run: terraform output -json > terraform-outputs.json
+
+      - name: Upload Terraform Outputs Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: terraform-outputs
+          path: ./terraform/terraform-outputs.json
