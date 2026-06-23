@@ -217,7 +217,7 @@ jobs:
       - name: Mirror Code Repository
         uses: actions/checkout@v4
 
-      - name: Connect to Azure (OIDC)
+      - name: Connect to Azure
         uses: azure/login@v2
         with:
           client-id: ${{ secrets.AZURE_CLIENT_ID }}
