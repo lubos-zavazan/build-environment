@@ -19,6 +19,51 @@ locals {
   }
 }
 
+# ------------------------------------------------------------------
+# Shared network infrastructure — stable across runs, not per-request
+# ------------------------------------------------------------------
+
+resource "azurerm_resource_group" "network_rg" {
+  name     = "rg-build-network-shared"
+  location = var.location
+}
+
+resource "azurerm_virtual_network" "build_vnet" {
+  name                = "vnet-build-shared"
+  address_space       = ["10.0.0.0/16"]
+  location            = azurerm_resource_group.network_rg.location
+  resource_group_name = azurerm_resource_group.network_rg.name
+}
+
+resource "azurerm_subnet" "build_subnet" {
+  name                 = "subnet-build-shared"
+  resource_group_name  = azurerm_resource_group.network_rg.name
+  virtual_network_name = azurerm_virtual_network.build_vnet.name
+  address_prefixes     = ["10.0.1.0/24"]
+}
+
+# ------------------------------------------------------------------
+# Per-request VM resources
+# ------------------------------------------------------------------
+
+resource "azurerm_resource_group" "build_rg" {
+  name     = "rg-build-${var.request_id}"
+  location = var.location
+}
+
+resource "azurerm_network_interface" "build_nic" {
+  count               = var.vm_count
+  name                = "nic-build-${var.request_id}-${count.index}"
+  location            = azurerm_resource_group.build_rg.location
+  resource_group_name = azurerm_resource_group.build_rg.name
+
+  ip_configuration {
+    name                          = "internal"
+    subnet_id                     = azurerm_subnet.build_subnet.id
+    private_ip_address_allocation = "Dynamic"
+  }
+}
+
 resource "azurerm_linux_virtual_machine" "build_vm" {
   count               = var.vm_count
   name                = "build-vm-${var.request_id}-${count.index}"
@@ -41,42 +86,10 @@ resource "azurerm_linux_virtual_machine" "build_vm" {
     storage_account_type = "Premium_LRS"
   }
 
-  source_image_id = var.azure_image_id
+  source_image_id = var.vm_imageid
 
   tags = {
     request_id = var.request_id
     image_id   = var.vm_imageid
-  }
-}
-
-resource "azurerm_resource_group" "build_rg" {
-  name     = "rg-build-${var.request_id}"
-  location = "East US"
-}
-
-resource "azurerm_virtual_network" "build_vnet" {
-  name                = "vnet-build-${var.request_id}"
-  address_space       = ["10.0.0.0/16"]
-  location            = azurerm_resource_group.build_rg.location
-  resource_group_name = azurerm_resource_group.build_rg.name
-}
-
-resource "azurerm_subnet" "build_subnet" {
-  name                 = "subnet-build"
-  resource_group_name  = azurerm_resource_group.build_rg.name
-  virtual_network_name = azurerm_virtual_network.build_vnet.name
-  address_prefixes     = ["10.0.1.0/24"]
-}
-
-resource "azurerm_network_interface" "build_nic" {
-  count               = var.vm_count
-  name                = "nic-build-${var.request_id}-${count.index}"
-  location            = azurerm_resource_group.build_rg.location
-  resource_group_name = azurerm_resource_group.build_rg.name
-
-  ip_configuration {
-    name                          = "internal"
-    subnet_id                     = azurerm_subnet.build_subnet.id
-    private_ip_address_allocation = "Dynamic"
   }
 }

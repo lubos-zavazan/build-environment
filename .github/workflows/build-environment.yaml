@@ -69,7 +69,7 @@ jobs:
 
       - name: Validate Compute Size
         run: |
-          case "${TF_VAR_vm_size,,}" in
+          case "${TF_VAR_vm_size}" in
             small|middle|large)
               echo "Validated: Compute size choice ($TF_VAR_vm_size) matches policy."
               ;;
@@ -117,7 +117,7 @@ jobs:
   terraform_plan:
     name: "Terraform Plan"
     runs-on: ubuntu-latest
-    needs: [resolve_image_metadata]
+    needs: [input_parameters]
     environment: test
 
     defaults:
@@ -160,7 +160,7 @@ jobs:
   terraform_apply:
     name: "Terraform Apply"
     runs-on: ubuntu-latest
-    needs: [terraform_plan, resolve_image_metadata]
+    needs: [terraform_plan]
     environment: production
 
     defaults:
