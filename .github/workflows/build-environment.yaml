@@ -24,7 +24,7 @@ on:
 # -------------------------------------------------------------------------
 # GLOBAL ENVIRONMENT - TRIGGER PAYLOAD VARIABLES
 # -------------------------------------------------------------------------
-  env:
+env:
   TF_VAR_request_id: ${{ github.event.client_payload.request_id }}
   TF_VAR_vm_imageid: ${{ github.event.client_payload.vm_imageid }}
   TF_VAR_vm_size: ${{ github.event.client_payload.vm_size }}
