@@ -1,6 +1,11 @@
 variable "vm_count" {
   description = "Number of virtual machines to provision."
   type        = number
+
+  validation {
+    condition     = var.vm_count >= 1 && var.vm_count <= 5
+    error_message = "vm_count must be between 1 and 5."
+  }
 }
 
 variable "vm_imageid" {
@@ -33,5 +38,10 @@ variable "vm_os" {
 variable "request_id" {
   description = "Unique request identifier passed from the dispatch payload."
   type        = string
+
+  validation {
+    condition     = can(regex("^[a-zA-Z0-9_-]+$", var.request_id))
+    error_message = "request_id must contain only alphanumeric characters, hyphens, and underscores."
+  }
 }
 
