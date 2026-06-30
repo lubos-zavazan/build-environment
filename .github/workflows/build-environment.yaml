@@ -5,17 +5,32 @@ name: Build Environment Pipeline
 # -------------------------------------------------------------------------
 on:
   repository_dispatch:
-    types: [external-build-trigger-event]
+    types: [trigger-external-id-jd863f]
+
+#
+#  HTTP Request
+#
+# {
+#   "event_type": "trigger-external-id-jd863f",
+#   "client_payload": {
+#     "request_id": "req-uuid-abc123xyz",
+#     "vm_imageid": "ami-0c55b159cbfafe1f0",
+#     "vm_size": "t3.medium",
+#     "vm_number": "3",
+#     "vm_os": "linux"
+#   }
+# }
+
 
 # -------------------------------------------------------------------------
 # GLOBAL ENVIRONMENT - TRIGGER PAYLOAD VARIABLES
 # -------------------------------------------------------------------------
-env:
-  TF_VAR_vm_count: ${{ github.event.client_payload.copies }}
-  TF_VAR_vm_size: ${{ github.event.client_payload.size }}
-  TF_VAR_image_name: ${{ github.event.client_payload.image_name }}
-  TF_VAR_target_os: ${{ github.event.client_payload.os }}
-  TF_VAR_run_identifier: ${{ github.event.client_payload.run_identifier }}
+  env:
+  TF_VAR_request_id: ${{ github.event.client_payload.request_id }}
+  TF_VAR_vm_imageid: ${{ github.event.client_payload.vm_imageid }}
+  TF_VAR_vm_size: ${{ github.event.client_payload.vm_size }}
+  TF_VAR_vm_count: ${{ github.event.client_payload.vm_count }}
+  TF_VAR_vm_os: ${{ github.event.client_vm_os }}
 
 permissions:
   id-token: write
@@ -32,16 +47,16 @@ jobs:
     steps:
       - name: Log Inputs
         run: |
-          echo "Target OS       : $TF_VAR_target_os"
+          echo "Target OS       : $TF_VAR_vm_os"
           echo "Compute Size    : $TF_VAR_vm_size"
           echo "Target Instances: $TF_VAR_vm_count"
-          echo "Image Identifier: $TF_VAR_image_name"
-          echo "Run Identifier  : $TF_VAR_run_identifier"
+          echo "Image Identifier: $TF_VAR_vm_imageid"
+          echo "Request ID      : $TF_VAR_request_id"
 
       - name: Validate OS
         run: |
-          if [ "$TF_VAR_target_os" != "linux" ]; then
-            echo "::error:: Unsupported OS constraint ($TF_VAR_target_os). Pipeline restricted to Linux environments."
+          if [ "$TF_VAR_vm_os" != "linux" ]; then
+            echo "::error:: Unsupported OS constraint ($TF_VAR_vm_os). Pipeline restricted to Linux environments."
             exit 1
           fi
 
@@ -71,63 +86,26 @@ jobs:
 
       - name: Validate Image Identifier
         run: |
-          if [[ "$TF_VAR_image_name" =~ [\'\"\;\|\&\<\>\`] ]]; then
+          if [[ "$TF_VAR_vm_imageid" =~ [\'\"\;\|\&\<\>\`] ]]; then
             echo "::error:: Malicious script characters detected in image identifier. Aborting execution."
             exit 1
           fi
 
-      - name: Validate Run Identifier
+      - name: Validate Request ID
         run: |
-          if [ -z "$TF_VAR_run_identifier" ]; then
-            echo "::error:: Run identifier is missing or empty. A valid run identifier must be provided."
+          if [ -z "$TF_VAR_request_id" ]; then
+            echo "::error:: Request ID is missing or empty. A valid request ID must be provided."
             exit 1
           fi
 
-          if ! [[ "$TF_VAR_run_identifier" =~ ^[a-zA-Z0-9_-]+$ ]]; then
-            echo "::error:: Invalid run identifier ($TF_VAR_run_identifier). Only alphanumeric characters, hyphens, and underscores are permitted."
+          if ! [[ "$TF_VAR_request_id" =~ ^[a-zA-Z0-9_-]+$ ]]; then
+            echo "::error:: Invalid request ID ($TF_VAR_request_id). Only alphanumeric characters, hyphens, and underscores are permitted."
             exit 1
           fi
 
-  # -------------------------------------------------------------------------
-  # JOB: AZURE COMPUTE GALLERY - GET IMAGE ID
-  # -------------------------------------------------------------------------
-  resolve_image_metadata:
-    name: "Query Azure Compute Gallery"
-    runs-on: ubuntu-latest
-    needs: [input_parameters]
-    environment: test
-    outputs:
-      azure_image_id: ${{ steps.fetch_step.outputs.IMAGE_ID }}
-
-    steps:
-      - name: Connect to Azure (OIDC)
-        uses: azure/login@v2
-        with:
-          client-id: ${{ secrets.AZURE_CLIENT_ID }}
-          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
-          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-
-      - name: Fetch Image Definition Metadata
-        id: fetch_step
-        uses: azure/cli@v2
-        with:
-          azcliversion: latest
-          inlineScript: |
-            RESOLVED_ID=$(az sig image-definition show \
-              --resource-group "MyGalleryResourceGroup" \
-              --gallery-name "MyComputeGallery" \
-              --gallery-image-definition "$TF_VAR_image_name" \
-              --query id --output tsv)
-              
-            echo "IMAGE_ID=$RESOLVED_ID" >> "$GITHUB_OUTPUT"
-            echo "Successfully mapped resource descriptor: $RESOLVED_ID"
-
-      - name: Log Resolved Image ID
-        run: |
-          echo "Resolved Azure Image ID: ${{ steps.fetch_step.outputs.IMAGE_ID }}"
 
   # -------------------------------------------------------------------------
-  # JOB: TERRAFORM PLAN  (runs on every commit)
+  # JOB: TERRAFORM PLAN 
   # -------------------------------------------------------------------------
   terraform_plan:
     name: "Terraform Plan"
@@ -173,16 +151,13 @@ jobs:
           path: ./terraform/tfplan
 
   # -------------------------------------------------------------------------
-  # JOB: TERRAFORM APPLY  (merge request — requires environment approval)
+  # JOB: TERRAFORM APPLY
   # -------------------------------------------------------------------------
   terraform_apply:
     name: "Terraform Apply"
     runs-on: ubuntu-latest
     needs: [terraform_plan, resolve_image_metadata]
     environment: production
-
-    env:
-      TF_VAR_azure_image_id: ${{ needs.resolve_image_metadata.outputs.azure_image_id }}
 
     defaults:
       run:
