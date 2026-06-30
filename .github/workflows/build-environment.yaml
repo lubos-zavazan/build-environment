@@ -37,7 +37,7 @@ env:
   TF_VAR_vm_imageid: ${{ github.event.client_payload.vm_imageid }}
   TF_VAR_vm_size: ${{ github.event.client_payload.vm_size }}
   TF_VAR_vm_count: ${{ github.event.client_payload.vm_count }}
-  TF_VAR_vm_os: ${{ github.event.client_vm_os }}
+  TF_VAR_vm_os: ${{ github.event.client_payload.vm_os }}
 
 permissions:
   id-token: write
