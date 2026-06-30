@@ -40,8 +40,8 @@ variable "request_id" {
   type        = string
 
   validation {
-    condition     = can(regex("^[a-zA-Z0-9_-]+$", var.request_id))
-    error_message = "request_id must contain only alphanumeric characters, hyphens, and underscores."
+    condition     = can(regex("^[a-zA-Z][a-zA-Z0-9_-]*$", var.request_id))
+    error_message = "request_id must start with a letter and contain only alphanumeric characters, hyphens, and underscores."
   }
 }
 

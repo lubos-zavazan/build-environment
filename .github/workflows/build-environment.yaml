@@ -67,8 +67,8 @@ jobs:
             exit 1
           fi
 
-          if ! [[ "$TF_VAR_request_id" =~ ^[a-zA-Z0-9_-]+$ ]]; then
-            echo "::error:: Invalid request ID ($TF_VAR_request_id). Only alphanumeric characters, hyphens, and underscores are permitted."
+          if ! [[ "$TF_VAR_request_id" =~ ^[a-zA-Z][a-zA-Z0-9_-]*$ ]]; then
+            echo "::error:: Invalid request ID ($TF_VAR_request_id). Must start with a letter and contain only alphanumeric characters, hyphens, and underscores."
             exit 1
           fi
 
