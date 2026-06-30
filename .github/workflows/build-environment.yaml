@@ -18,7 +18,7 @@ on:
 # Content-Length: 254
 #
 # {
-#   "event_type": "trigger-external-id-lz913k",
+#   "event_type": "trigger-external-id-lk347-8282",
 #   "client_payload": {
 #     "request_id": "req-uuid-abc123xyz",
 #     "vm_imageid": "ami-0c55b159cbfafe1f0",
