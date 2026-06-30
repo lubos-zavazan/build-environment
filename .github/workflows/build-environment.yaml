@@ -60,6 +60,18 @@ jobs:
           echo "Target Instances: $TF_VAR_vm_count"
           echo "Image Identifier: $TF_VAR_vm_imageid"
 
+      - name: Validate Request ID
+        run: |
+          if [ -z "$TF_VAR_request_id" ]; then
+            echo "::error:: Request ID is missing or empty. A valid request ID must be provided."
+            exit 1
+          fi
+
+          if ! [[ "$TF_VAR_request_id" =~ ^[a-zA-Z0-9_-]+$ ]]; then
+            echo "::error:: Invalid request ID ($TF_VAR_request_id). Only alphanumeric characters, hyphens, and underscores are permitted."
+            exit 1
+          fi
+
       - name: Validate OS
         run: |
           if [ "$TF_VAR_vm_os" != "linux" ]; then
@@ -98,19 +110,7 @@ jobs:
             exit 1
           fi
 
-      - name: Validate Request ID
-        run: |
-          if [ -z "$TF_VAR_request_id" ]; then
-            echo "::error:: Request ID is missing or empty. A valid request ID must be provided."
-            exit 1
-          fi
-
-          if ! [[ "$TF_VAR_request_id" =~ ^[a-zA-Z0-9_-]+$ ]]; then
-            echo "::error:: Invalid request ID ($TF_VAR_request_id). Only alphanumeric characters, hyphens, and underscores are permitted."
-            exit 1
-          fi
-
-
+          
   # -------------------------------------------------------------------------
   # JOB: TERRAFORM PLAN 
   # -------------------------------------------------------------------------
