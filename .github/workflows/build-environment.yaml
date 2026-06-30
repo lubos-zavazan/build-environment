@@ -5,7 +5,7 @@ name: Build Environment Pipeline
 # -------------------------------------------------------------------------
 on:
   repository_dispatch:
-    types: [trigger-external-id-jd863f]
+    types: [trigger-external-id-jd867-32u3]
    
 #  HTTP Request
 #
