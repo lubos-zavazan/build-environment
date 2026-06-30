@@ -151,7 +151,7 @@ jobs:
       - name: Upload Plan Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: tfplan
+          name: tfplan-${{ env.TF_VAR_request_id }}
           path: ./terraform/tfplan
 
   # -------------------------------------------------------------------------
@@ -189,7 +189,7 @@ jobs:
       - name: Download Plan Artifact
         uses: actions/download-artifact@v4
         with:
-          name: tfplan
+          name: tfplan-${{ env.TF_VAR_request_id }}
           path: ./terraform
 
       - name: Apply Infrastructure Changes
