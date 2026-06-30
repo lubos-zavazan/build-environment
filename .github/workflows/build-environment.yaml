@@ -15,8 +15,8 @@ on:
 #   "client_payload": {
 #     "request_id": "req-uuid-abc123xyz",
 #     "vm_imageid": "ami-0c55b159cbfafe1f0",
-#     "vm_size": "t3.medium",
-#     "vm_number": "3",
+#     "vm_size": "small",
+#     "vm_count": "3",
 #     "vm_os": "linux"
 #   }
 # }
@@ -47,11 +47,11 @@ jobs:
     steps:
       - name: Log Inputs
         run: |
+          echo "Request ID      : $TF_VAR_request_id" 
           echo "Target OS       : $TF_VAR_vm_os"
           echo "Compute Size    : $TF_VAR_vm_size"
           echo "Target Instances: $TF_VAR_vm_count"
           echo "Image Identifier: $TF_VAR_vm_imageid"
-          echo "Request ID      : $TF_VAR_request_id"
 
       - name: Validate OS
         run: |
