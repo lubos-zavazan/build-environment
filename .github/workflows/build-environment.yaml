@@ -7,7 +7,6 @@ on:
   repository_dispatch:
     types: [trigger-external-id-jd863f]
 
-#
 #  HTTP Request
 #
 # {
